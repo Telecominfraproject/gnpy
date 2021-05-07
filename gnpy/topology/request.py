@@ -26,6 +26,7 @@ from gnpy.core.utils import lin2db
 from gnpy.core.info import create_input_spectral_information
 from gnpy.core.exceptions import ServiceError, DisjunctionError
 import gnpy.core.ansi_escapes as ansi_escapes
+from gnpy.topology.spectrum_assignment import m_to_freq
 from copy import deepcopy
 from csv import writer
 from math import ceil
@@ -143,13 +144,13 @@ class ResultElement:
 
     uid = property(lambda self: repr(self))
 
-    @property
-    def detailed_path_json(self):
+    def detailed_path_json(self, path_to_json):
         """ a function that builds path object for normal and blocking cases
         """
+
         index = 0
         pro_list = []
-        for element in self.computed_path:
+        for element in path_to_json:
             temp = {
                 'path-route-object': {
                     'index': index,
@@ -201,6 +202,7 @@ class ResultElement:
         def path_metric(pth, req):
             """ creates the metrics dictionary
             """
+            freq_slot = m_to_freq(req.N, req.M)
             return [
                 {
                     'metric-type': 'SNR-bandwidth',
@@ -219,24 +221,47 @@ class ResultElement:
                     'accumulative-value': round(mean(pth[-1].osnr_ase_01nm), 2)
                 },
                 {
+                    'metric-type': 'Transponder',
+                    'name': req.tsp,
+                    'mode': req.tsp_mode
+                },
+                {
                     'metric-type': 'reference_power',
                     'accumulative-value': req.power
                 },
                 {
                     'metric-type': 'path_bandwidth',
                     'accumulative-value': req.path_bandwidth
+                },
+                {
+                    'metric-type': 'num-of-channels',
+                    'accumulative-value': ceil(req.path_bandwidth / req.bit_rate)
+                },
+                {
+                    'metric-type': 'path-channel-spacing',
+                    'accumulative-value': req.spacing
+                },
+                {
+                    'metric-type': 'bit-rate',
+                    'accumulative-value': req.bit_rate
+                },
+                {
+                    'metric-type': 'freq-spectrum',
+                    'freq-start': freq_slot[0],
+                    'freq-end': freq_slot[1]
                 }
             ]
         if self.path_request.bidir:
             path_properties = {
                 'path-metric': path_metric(self.computed_path, self.path_request),
                 'z-a-path-metric': path_metric(self.reversed_computed_path, self.path_request),
-                'path-route-objects': self.detailed_path_json
+                'path-route-objects': self.detailed_path_json(self.computed_path),
+                'reverse_path_route_objects': self.detailed_path_json(self.reversed_computed_path)
             }
         else:
             path_properties = {
                 'path-metric': path_metric(self.computed_path, self.path_request),
-                'path-route-objects': self.detailed_path_json
+                'path-route-objects': self.detailed_path_json(self.computed_path)
             }
         return path_properties
 
@@ -819,6 +844,7 @@ def compute_path_dsjctn(network, equipment, pathreqlist, disjunctions_list):
     # step 5 select the first combination that works
     pathreslist_disjoint = {}
     for dis in disjunctions_list:
+        
         if candidates[dis.disjunction_id]:
             for pth in candidates[dis.disjunction_id][0]:
                 if allpaths[id(pth)].req in pathreqlist_disjt:
@@ -829,7 +855,7 @@ def compute_path_dsjctn(network, equipment, pathreqlist, disjunctions_list):
                     # remove duplicated candidates
                     candidates = remove_candidate(candidates, allpaths, allpaths[id(pth)].req, pth)
         else:
-            msg = f'No disjoint path found with added constraint'
+            msg = f'No disjoint path found with added constraint for request_id "{dis.disjunction_id}"'
             LOGGER.critical(msg)
             print(f'{msg}\nComputation stopped.')
             # TODO in this case: replay step 5  with the candidate without constraints
